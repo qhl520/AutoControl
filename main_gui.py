@@ -11,6 +11,7 @@ from math_core import PolynomialUtils, RouthStability
 from algorithms import design_controller
 from simulator import CustomSimulator, PerformanceAnalyzer
 
+# 字体设置保持不变
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'SimSun'] 
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'sans-serif'
@@ -18,7 +19,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v3.4 (Ultimate Clean)")
+        self.root.title("SISO 自动控制系统设计平台 Pro v3.5 (Optimized)") # 版本号微调
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -42,7 +43,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.4", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.5", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -167,7 +168,8 @@ class AutoControlApp:
             sim_plant = CustomSimulator(num, den)
 
             calc_dt = ts / 200.0
-            dt = min(0.01, calc_dt)  
+            # 修正：增加 dt 下限保护 (1e-5)，防止极小 Ts 导致性能问题
+            dt = max(1e-5, min(0.01, calc_dt))
             t_end = ts * 4.0
             t_data = np.arange(0, t_end, dt)
             
@@ -175,7 +177,7 @@ class AutoControlApp:
             u_list = []
             y_curr = sim_plant.compute_output(0.0)
             
-            self.log("⚙️ 启动抗饱和高精度仿真...", "info")
+            self.log(f"⚙️ 启动抗饱和高精度仿真 (dt={dt:.1e}s)...", "info")
             
             for t in t_data:
                 r_val = t if in_type == 'ramp' else 1.0

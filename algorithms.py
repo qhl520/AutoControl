@@ -15,8 +15,9 @@ def design_controller(num, den, mp, ts, input_type='step'):
     # --- 1. 极点计算 (显式处理临界阻尼，消除 Magic Number) ---
     if mp <= 1e-6:
         # 临界阻尼或过阻尼情况 (zeta=1)
+        # 修正：对于临界阻尼系统(te^-t)，2%调节时间约为 5.834/wn (基于 (1+wt)*exp(-wt)=0.02 求解)
         zeta = 1.0
-        wn = 4.0 / ts 
+        wn = 5.834 / ts 
         p_real = -wn
         p_imag = 0.0
     else:
