@@ -77,7 +77,7 @@ class PerformanceAnalyzer:
                 break
         if in_band: ts = 0 
 
-        # 4. [架构修复] 上升时间 Tr (10% -> 90%) 移回此处
+        # 4. 上升时间 Tr (10% -> 90%) 
         tr = 0.0
         if abs(self.y_final) > 1e-6:
             # 找到第一个大于 10% 的点
