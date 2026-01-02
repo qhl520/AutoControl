@@ -20,7 +20,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v5.0 (Final Logic)") 
+        self.root.title("SISO 自动控制系统设计平台 Pro v5.1 (Performance Optimized)") 
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -44,7 +44,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v5.0", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v5.1", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -170,7 +170,7 @@ class AutoControlApp:
             except ValueError:
                 raise ValueError("输入格式错误：请输入有效的数字，不要包含非数字字符。")
 
-            if ts <= 1e-3: raise ValueError("调节时间 Ts 必须 > 0.001s")
+            if ts <= 1e-4: raise ValueError("调节时间 Ts 太小 (建议 > 0.0001s)")
             if mp <= 0.01 or mp >= 100: raise ValueError("超调量 MP 必须在 0.01% - 100% 之间")
             if ulim <= 0: raise ValueError("控制量限幅值必须为正数")
 
@@ -179,7 +179,6 @@ class AutoControlApp:
             # 2. 设计控制器
             Bc, Ac, r_added, zeta, wn, desired_poly = design_controller(num, den, mp, ts, in_type)
             
-            # [鲁棒性]: 系数归一化
             if abs(Ac[-1]) > 1e-9:
                 scale_factor = Ac[-1]
                 Ac = [c / scale_factor for c in Ac]
@@ -227,32 +226,43 @@ class AutoControlApp:
             self.log(f"🔒 劳斯稳定性检查：{status}", "success" if is_stable else "warning")
             if not is_stable: self.log("⚠️ 警告：闭环理论不稳定！", "warning")
 
-            # 6. 时域仿真
+            # 6. 时域仿真 (含防卡死 + 抗饱和)
             sim_ctrl = CustomSimulator(Bc, Ac)
             sim_plant = CustomSimulator(num, den)
 
-            # 动态步长
+            # [重要优化]：防卡死策略
+            # 1. 计算理论上的 dt
             dt_perf = ts / 200.0
+            
+            # 2. 计算刚性限制的 dt
             max_plant_coeff = max(np.abs(den)) if den else 0
             max_ctrl_coeff = max(np.abs(Ac)) if Ac else 0
             global_max_coeff = max(max_plant_coeff, max_ctrl_coeff)
             
-            dt_limit = 0.01
-            if global_max_coeff > 1000: dt_limit = 0.001
-            if global_max_coeff > 10000: dt_limit = 0.0001
-            if global_max_coeff > 100000: dt_limit = 1e-5
+            dt_stiff = 0.01
+            if global_max_coeff > 1000: dt_stiff = 0.001
+            if global_max_coeff > 10000: dt_stiff = 0.0001
+            if global_max_coeff > 100000: dt_stiff = 1e-5
             
-            dt = min(dt_perf, dt_limit)
+            dt = min(dt_perf, dt_stiff)
             dt = max(1e-7, dt)
             
-            # 自适应仿真时长
             t_end = max(ts * 8.0, 5.0) 
+            
+            # 3. [防卡死核心]：限制最大点数
+            # 如果点数超过 50,000，强制增大 dt
+            MAX_POINTS = 50000
+            total_points = int(t_end / dt)
+            if total_points > MAX_POINTS:
+                dt = t_end / MAX_POINTS
+                # self.log(f"⚠️ 警告：仿真点数过多，已自动调整 dt = {dt:.2e}s", "warning")
+            
             t_data = np.arange(0, t_end, dt)
             y_list = []
             u_list = []
             y_curr = sim_plant.compute_output(0.0)
             
-            self.log(f"⚙️ 启动仿真 (dt={dt:.1e}s)...", "info")
+            self.log(f"⚙️ 启动仿真 (dt={dt:.1e}s, t_end={t_end:.1f}s)...", "info")
             
             for t in t_data:
                 r_val = t if in_type == 'ramp' else 1.0
@@ -308,23 +318,19 @@ class AutoControlApp:
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
             self.ax2.legend(prop={'size': 9})
 
-            # 8. [毒辣逻辑修复]: 根据输入类型显示正确的指标
+            # 8. 指标计算与显示 (使用封装好的 Simulator)
             analyzer = PerformanceAnalyzer(t_data, y_data, target_val)
-            metrics = analyzer.get_metrics() # 计算基本指标
+            metrics = analyzer.get_metrics()
             
             if in_type == 'step':
-                # 阶跃：显示 OS, Ts, Tp, Tr
-                y_final = metrics['steady_val']
-                tr = 0.0
-                if abs(y_final) > 1e-6:
-                    idx_10 = np.where(y_data >= 0.1 * y_final)[0]
-                    idx_90 = np.where(y_data >= 0.9 * y_final)[0]
-                    if len(idx_10) > 0 and len(idx_90) > 0:
-                        tr = t_data[idx_90[0]] - t_data[idx_10[0]]
-
-                self.log(f"📊 [阶跃]指标: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tp={metrics['tp']:.2f}s")
+                tr = metrics['tr'] # 直接从 analyzer 获取
                 
-                # 绘图线
+                # 显式打印稳态误差，证明为0
+                ess = metrics['error']
+                
+                self.log(f"📊 [阶跃]指标: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tr={tr:.2f}s | ess={ess:.1e}")
+                
+                # 绘图标注
                 tp = metrics['tp']
                 peak_val = y_data[np.argmax(y_data)]
                 self.ax1.axvline(x=tp, color='green', linestyle='--', alpha=0.6, linewidth=1)
@@ -341,12 +347,11 @@ class AutoControlApp:
                         f"OS : {metrics['overshoot']:5.2f} %\n"
                         f"Tp : {metrics['tp']:5.2f} s\n"
                         f"Tr : {tr:5.2f} s\n"
-                        f"Ts : {metrics['ts']:5.2f} s")
+                        f"Ts : {metrics['ts']:5.2f} s\n"
+                        f"Ess: {ess:.1e}") # 增加稳态误差显示
 
             elif in_type == 'ramp':
-                # 斜坡：显示稳态跟踪误差 (Steady State Error)
-                # 计算末端误差
-                final_error = abs(t_data[-1] - y_data[-1])
+                final_error = metrics['error']
                 
                 self.log(f"📊 [斜坡]指标: 稳态跟踪误差 ess ≈ {final_error:.5f}")
                 self.log("ℹ️ 提示: 斜坡响应不适用超调量/调节时间指标")
@@ -356,7 +361,6 @@ class AutoControlApp:
                         f"Tracking Err:\n"
                         f"ess ≈ {final_error:.4f}")
 
-            # 统一显示信息框
             self.ax1.text(0.96, 0.04, info, transform=self.ax1.transAxes,
                           verticalalignment='bottom', horizontalalignment='right',
                           bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.9, ec="#bdc3c7"),
