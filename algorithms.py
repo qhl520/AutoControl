@@ -11,52 +11,41 @@ def count_integrators(den: list) -> int:
     return cnt
 
 def design_controller(num, den, mp, ts, input_type='step'):
-    """Diophantine 方程求解器 (改进版：动态远极点)"""
-    # 1. 期望极点计算
+    """Diophantine 方程求解器 (动态远极点版)"""
     ln_mp = math.log(mp/100) if mp > 0 else -999
     zeta = -ln_mp / math.sqrt(math.pi**2 + ln_mp**2)
     wn = 4.0 / (zeta * ts)
     
-    # 构造复数主极点
     p_real = -zeta * wn
     p_imag = wn * math.sqrt(1 - zeta**2)
     desired_pole = complex(p_real, p_imag)
     
-    # 2. 智能积分补偿
     req_type = 2 if input_type == 'ramp' else 1
     cur_type = count_integrators(den)
     r_add = max(0, req_type - cur_type)
     
-    # 构造广义对象分母
     s_term = [1.0]
     for _ in range(r_add):
         s_term = PolynomialUtils.multiply(s_term, [0.0, 1.0])
     Dp_ext = PolynomialUtils.multiply(den, s_term)
     
-    # 3. 构造闭环特征多项式 A_cl
     n_ext = len(Dp_ext) - 1
     deg_ctrl = n_ext - 1
     total_order = n_ext + deg_ctrl
     
-    # 【核心】使用 PoleUtils 正确处理共轭极点
     complex_poles = PoleUtils.conjugate_pair([desired_pole])
     A_cl = [1.0]
     for p in complex_poles:
-        A_cl = PolynomialUtils.multiply(A_cl, [-p, 1.0]) # (s-p)
-    A_cl = [c.real for c in A_cl] # 转实数
+        A_cl = PolynomialUtils.multiply(A_cl, [-p, 1.0])
+    A_cl = [c.real for c in A_cl]
 
-    # 【FIX 2】动态计算远极点位置
-    # 远极点应至少为主导极点实部的 10 倍，且具有一定的最小距离
-    # 避免在高频系统中，硬编码的极点反而成为慢极点
+    # 动态计算远极点位置
     dom_real_abs = abs(zeta * wn)
     far_pole_loc = max(10.0, 10.0 * dom_real_abs)
     
-    # 补全远极点
     while len(A_cl) - 1 < total_order:
-        # 添加极点 (s + far_pole_loc) -> 系数 [far_pole_loc, 1.0] (升幂：常数项在前)
         A_cl = PolynomialUtils.multiply(A_cl, [far_pole_loc, 1.0])
         
-    # 4. 求解 Sylvester 矩阵
     num_vars = (deg_ctrl + 1) * 2
     M = np.zeros((num_vars, num_vars))
     b_vec = np.zeros(num_vars)
@@ -77,7 +66,7 @@ def design_controller(num, den, mp, ts, input_type='step'):
     try:
         x = np.linalg.solve(M, b_vec)
     except np.linalg.LinAlgError:
-        raise ValueError("设计失败：Sylvester矩阵奇异，对象可能不可控或零极点对消")
+        raise ValueError("设计失败：Sylvester矩阵奇异")
 
     A_prime = x[:deg_ctrl+1].tolist()
     B_final = x[deg_ctrl+1:].tolist()

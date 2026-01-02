@@ -19,6 +19,16 @@ class PolynomialUtils:
         for i in range(len(p1)): res[i] += p1[i]
         for i in range(len(p2)): res[i] += p2[i]
         return PolynomialUtils.filter_small_coeffs(res)
+    
+    @staticmethod
+    def derivative(poly: List[float]) -> List[float]:
+        """多项式求导 (升幂): d/ds (a0 + a1*s + ...) = a1 + 2*a2*s + ..."""
+        n = len(poly)
+        if n <= 1: return [0.0]
+        res = []
+        for i in range(1, n):
+            res.append(poly[i] * i)
+        return res
 
     @staticmethod
     def filter_small_coeffs(poly: List[float], eps: float = 1e-9) -> List[float]:
@@ -26,50 +36,101 @@ class PolynomialUtils:
 
     @staticmethod
     def to_str(poly: List[float], var: str = 's') -> str:
+        # 上标映射表
+        superscript_map = {
+            '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
+            '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹'
+        }
+        
+        def to_super(n):
+            return "".join(superscript_map.get(c, c) for c in str(n))
+
+        n = len(poly)
         terms = []
-        for i, c in enumerate(poly):
-            if abs(c) < 1e-6: continue
-            coeff = f"{c:.4f}".rstrip('0').rstrip('.')
-            if coeff.endswith('.'): coeff += '0' # Fix "12." case
+        
+        for i in range(n - 1, -1, -1):
+            c = poly[i]
+            if abs(c) < 1e-6: continue # 忽略极小系数
             
-            if i == 0: terms.append(coeff)
-            elif i == 1: terms.append(f"{coeff}{var}")
-            else: terms.append(f"{coeff}{var}^{i}")
-        return " + ".join(terms) if terms else "0"
+            # 1. 处理正负号
+            is_negative = c < 0
+            abs_c = abs(c)
+            
+            # 2. 格式化数值 (去除末尾0)
+            val_str = f"{abs_c:.4f}".rstrip('0').rstrip('.')
+            if val_str == '': val_str = '0'
+            
+            # 3. 构建显示组件
+            # 系数部分
+            if i == 0:
+                # 常数项：必须显示数字
+                coeff_str = val_str
+            else:
+                # 高阶项：如果是1则省略 (例如 1s -> s)
+                if abs(abs_c - 1.0) < 1e-6:
+                    coeff_str = ""
+                else:
+                    coeff_str = val_str
+            
+            # 变量部分
+            if i == 0:
+                var_str = ""
+            elif i == 1:
+                var_str = var
+            else:
+                var_str = f"{var}{to_super(i)}"
+                
+            # 组合
+            term_str = f"{coeff_str}{var_str}"
+            terms.append((is_negative, term_str))
+            
+        if not terms: return "0"
+        
+        # 4. 拼接
+        res = []
+        for idx, (is_neg, s) in enumerate(terms):
+            if idx == 0:
+                # 第一项前缀
+                prefix = "-" if is_neg else ""
+            else:
+                # 后续项前缀
+                prefix = " - " if is_neg else " + "
+            res.append(f"{prefix}{s}")
+            
+        return "".join(res)
 
 class RouthStability:
     @staticmethod
     def check(coeff_asc: List[float]) -> bool:
-        """
-        劳斯判据稳定性检查
-        输入: 升幂排列的系数 [a0, a1, a2...] -> a0 + a1*s + ...
-        """
-        # 转换为降幂排列: a_n s^n + ... + a_0 (标准Routh表习惯)
         coeff = coeff_asc[::-1]
         
-        # 去除高阶零系数
         while len(coeff) > 0 and abs(coeff[0]) < 1e-9:
             coeff.pop(0)
             
-        if not coeff: return True # 空多项式视为稳定? 或者抛错
+        if not coeff: return True
             
         n = len(coeff)
         cols = (n + 1) // 2
         R = np.zeros((n, cols))
 
-        # 填充前两行
         R[0, :len(coeff[0::2])] = coeff[0::2]
         R[1, :len(coeff[1::2])] = coeff[1::2]
         
-        # 【FIX 4】统一 Epsilon 阈值
         EPS = 1e-9
 
         for i in range(2, n):
-            # 检查上一行首元素是否为0
+            # --- 全零行处理逻辑 ---
+            if np.all(np.abs(R[i-1, :]) < EPS):
+                # 构造辅助多项式并求导
+                # 辅助方程系数即上一行 R[i-2, :]
+                # 对应阶次 n - (i - 2) - 1, 间隔2
+                for j in range(cols):
+                    power = (n - 1 - (i - 2)) - 2 * j 
+                    if power < 0: continue
+                    R[i-1, j] = R[i-2, j] * power # 求导替换
+            # --------------------
+
             if abs(R[i-1, 0]) < EPS:
-                 # TODO: 完整处理全零行需要对辅助方程求导
-                 # 这里仅做简单的 Epsilon 替换以避免除零崩溃
-                 # 这对于工程作业通常足够，但对于临界稳定/共轭虚根情况仍是不完全的
                  R[i-1, 0] = 1e-6 
 
             for j in range(cols - 1):
@@ -77,8 +138,6 @@ class RouthStability:
                 c, d = R[i-1, 0], R[i-1, j+1]
                 R[i, j] = (c * b - a * d) / c
 
-        # 判据：第一列元素符号相同（即全为正，假设首项>0）
-        # 且不能出现NaN
         first_col = R[:, 0]
         if np.any(np.isnan(first_col)): return False
         
@@ -87,7 +146,6 @@ class RouthStability:
 class PoleUtils:
     @staticmethod
     def conjugate_pair(poles: List[Union[float, complex]]) -> List[Union[float, complex]]:
-        """自动配对共轭极点，防止数学错误"""
         paired = []
         for p in poles:
             if isinstance(p, complex) and abs(p.imag) > 1e-6:

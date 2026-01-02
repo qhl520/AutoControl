@@ -1,11 +1,9 @@
 import numpy as np
 
 class CustomSimulator:
-    """手写 RK4 仿真器"""
-    def __init__(self, num: list, den: list):
-        # 【FIX 3】因果性检查
-        # 物理可实现系统要求：分母阶次 >= 分子阶次
-        # den阶次 = len(den) - 1, num阶次 = len(num) - 1
+    """手写 RK4 仿真器 (支持执行器限幅)"""
+    def __init__(self, num: list, den: list, u_limit: float = None):
+        # 因果性检查
         if len(num) > len(den):
              raise ValueError(f"物理不可实现：分子阶次({len(num)-1})高于分母阶次({len(den)-1})")
 
@@ -16,8 +14,10 @@ class CustomSimulator:
         self.num = [c / scale for c in num]
         self.den = [c / scale for c in den]
         self.n = len(den) - 1
+        self.u_limit = u_limit # 输出限幅值
+        self.last_u = 0.0      # 记录上一次实际施加的控制量
         
-        # 补齐分子 (使其长度等于分母，方便算法处理)
+        # 补齐分子
         if len(self.num) < len(self.den):
             self.num += [0.0] * (len(self.den) - len(self.num))
 
@@ -26,7 +26,6 @@ class CustomSimulator:
         self.B = np.zeros((self.n, 1))
         self.C = np.zeros((1, self.n))
         
-        # 构造A矩阵 (Bottom companion form)
         for i in range(self.n - 1): self.A[i, i+1] = 1.0
         self.A[self.n-1, :] = -np.array(self.den[:-1])
         self.B[self.n-1, 0] = 1.0
@@ -37,14 +36,31 @@ class CustomSimulator:
         
         self.state = np.zeros((self.n, 1))
 
-    def step(self, u, dt):
-        def dyn(x): return self.A @ x + self.B * u
+    def step(self, u_cmd, dt):
+        """
+        执行一步仿真
+        u_cmd: 指令控制量
+        dt: 步长
+        返回: (y, u_actual)
+        """
+        # --- 控制量限幅 (Fix: Control Effort Saturation) ---
+        u_actual = u_cmd
+        if self.u_limit is not None:
+            if u_actual > self.u_limit: u_actual = self.u_limit
+            elif u_actual < -self.u_limit: u_actual = -self.u_limit
+        
+        self.last_u = u_actual
+        
+        # RK4 积分
+        def dyn(x): return self.A @ x + self.B * u_actual
         k1 = dyn(self.state)
         k2 = dyn(self.state + 0.5*dt*k1)
         k3 = dyn(self.state + 0.5*dt*k2)
         k4 = dyn(self.state + dt*k3)
         self.state += (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
-        return float(self.C @ self.state + self.D * u)
+        
+        y = float(self.C @ self.state + self.D * u_actual)
+        return y
 
 class PerformanceAnalyzer:
     """性能指标计算"""
@@ -52,27 +68,18 @@ class PerformanceAnalyzer:
         self.t = t
         self.y = y
         self.target = target
-        
-        # 【FIX 3】更健壮的稳态值计算
-        # 取最后 10% 的数据点计算平均值，而非固定的50个点
-        # 避免仿真点数很少时报错，或点数极多时范围太小
         lookback = max(1, int(len(y) * 0.1))
         self.y_final = np.mean(y[-lookback:])
 
     def get_metrics(self, ts_tol=0.02):
         y_max = np.max(self.y)
-        
-        # 避免除以零
         if abs(self.y_final) > 1e-9:
             overshoot = (y_max - self.y_final)/self.y_final * 100 
         else:
             overshoot = 0.0
 
-        # 调节时间计算
         ts = 0
         upper, lower = self.y_final*(1+ts_tol), self.y_final*(1-ts_tol)
-        
-        # 从后向前扫描，找到第一个超出误差带的点
         in_band = True
         for i in range(len(self.y)-1, -1, -1):
             if self.y[i] > upper or self.y[i] < lower:
@@ -80,9 +87,7 @@ class PerformanceAnalyzer:
                 in_band = False
                 break
         
-        # 如果从未进入误差带（发散或一直在外），Ts设为仿真结束时间
-        if in_band: # 如果一开始就在误差带内（不太可能，除非初始值就在目标值）
-             ts = 0 
+        if in_band: ts = 0 
         
         return {
             "steady_val": self.y_final,
