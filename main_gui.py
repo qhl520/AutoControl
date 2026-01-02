@@ -19,7 +19,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v3.8 (Thesis Edition)") 
+        self.root.title("SISO 自动控制系统设计平台 Pro v3.9 (Final Robust)") 
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -43,7 +43,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.8", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.9", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -176,12 +176,10 @@ class AutoControlApp:
             self.log("-" * 55)
             self.log("🔍 验证环节：丢番图方程求解 (LHS vs RHS)")
             
-            # 计算实际闭环多项式
             LHS_part1 = PolynomialUtils.multiply(den, Ac)
             LHS_part2 = PolynomialUtils.multiply(num, Bc)
             actual_poly = PolynomialUtils.add(LHS_part1, LHS_part2)
             
-            # 对齐长度以便打印
             len_max = max(len(actual_poly), len(desired_poly))
             act_pad = [0.0]*(len_max - len(actual_poly)) + actual_poly
             des_pad = [0.0]*(len_max - len(desired_poly)) + desired_poly
@@ -190,7 +188,6 @@ class AutoControlApp:
             self.log(header)
             self.log("-" * 55)
             
-            # 倒序打印
             for i in range(len_max - 1, -1, -1):
                 idx = len_max - 1 - i
                 val_act = act_pad[idx]
@@ -205,7 +202,6 @@ class AutoControlApp:
             self.log("🧮 系统传递函数形式:")
             self.log_transfer_function("控制器 C(s)", Bc, Ac)
             
-            # 闭环传递函数 T(s) = (Num*Bc) / Characteristic_Poly
             CL_num = PolynomialUtils.multiply(num, Bc)
             CL_den = actual_poly 
             self.log_transfer_function("闭环系统 T(s)", CL_num, CL_den)
@@ -217,12 +213,23 @@ class AutoControlApp:
             self.log(f"🔒 劳斯稳定性检查：{status}", "success" if is_stable else "warning")
             if not is_stable: self.log("⚠️ 警告：闭环理论不稳定！", "warning")
 
-            # 5. 时域仿真
+            # 5. 时域仿真 (含鲁棒性优化)
             sim_ctrl = CustomSimulator(Bc, Ac)
             sim_plant = CustomSimulator(num, den)
 
-            calc_dt = ts / 200.0
-            dt = max(1e-5, min(0.01, calc_dt))
+            # [优化]：鲁棒的步长计算逻辑
+            dt_perf = ts / 200.0  # 基于设计指标的基础步长
+            
+            # 简单的启发式检查：防止刚性系统(stiff system)导致仿真发散
+            # 如果被控对象系数非常大，说明动态极快，强制缩小 dt
+            max_coeff = max(np.abs(den))
+            dt_limit = 0.01
+            if max_coeff > 1000: dt_limit = 0.001
+            if max_coeff > 10000: dt_limit = 0.0001
+            
+            dt = min(dt_perf, dt_limit)
+            dt = max(1e-6, dt) # 绝对下限
+            
             t_end = ts * 4.0
             t_data = np.arange(0, t_end, dt)
             
@@ -236,27 +243,25 @@ class AutoControlApp:
                 r_val = t if in_type == 'ramp' else 1.0
                 error = r_val - y_curr
                 
+                # 1. 计算控制器原始输出
                 u_raw = sim_ctrl.compute_output(error)
                 
-                in_saturation = False
+                # 2. 执行器物理限幅 (Actuator Saturation)
                 if u_raw > ulim: 
                     u_act = ulim
-                    in_saturation = True
                 elif u_raw < -ulim: 
                     u_act = -ulim
-                    in_saturation = True
                 else: 
                     u_act = u_raw
                 
                 y_list.append(y_curr)
                 u_list.append(u_act)
                 
-                ctrl_input = error
-                if in_saturation:
-                    if (u_act > 0 and error > 0) or (u_act < 0 and error < 0):
-                        ctrl_input = 0.0
-
-                sim_ctrl.update_state(ctrl_input, dt)
+                # 3. 状态更新
+                # [修正] 移除 ctrl_input = 0.0 的逻辑
+                # 保持真实的误差输入，允许控制器内部状态自然演化
+                # 这样更符合物理系统中执行器限幅的真实表现
+                sim_ctrl.update_state(error, dt)
                 sim_plant.update_state(u_act, dt)
                 y_curr = sim_plant.compute_output(u_act)
 
@@ -276,28 +281,25 @@ class AutoControlApp:
             self.ax1.plot(t_data, y_data, 'b', linewidth=2, label='系统输出')
             self.ax1.legend(prop={'size': 9})
             
-            self.setup_plot_style("控制量 u(t) [含抗饱和]", self.ax2)
+            self.setup_plot_style("控制量 u(t) [含限幅]", self.ax2)
             self.ax2.plot(t_data, u_data, 'g', linewidth=1.5, label='控制量')
             self.ax2.axhline(ulim, color='k', linestyle=':', alpha=0.3, label='限幅值')
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
             self.ax2.legend(prop={'size': 9})
 
-            # 性能指标与可视化标注
+            # 性能指标
             analyzer = PerformanceAnalyzer(t_data, y_data, target_val)
             metrics = analyzer.get_metrics()
             
             if in_type == 'step':
                 self.log(f"📊 仿真结果: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tp={metrics['tp']:.2f}s")
                 
-                # --- 绘制辅助线和标注 ---
-                # 1. 峰值时间 Tp (绿色虚线 + 红点)
                 tp = metrics['tp']
                 peak_val = y_data[np.argmax(y_data)]
                 self.ax1.axvline(x=tp, color='green', linestyle='--', alpha=0.6, linewidth=1)
                 self.ax1.plot(tp, peak_val, 'ro', markersize=4)
                 self.ax1.text(tp, peak_val*1.02, f"Tp:{tp:.2f}s", color='green', fontsize=8, ha='center')
 
-                # 2. 调节时间 Ts (品红虚线)
                 ts = metrics['ts']
                 if ts > 0:
                     self.ax1.axvline(x=ts, color='magenta', linestyle='--', alpha=0.6, linewidth=1)
