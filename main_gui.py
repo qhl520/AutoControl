@@ -256,7 +256,7 @@ class AutoControlApp:
             total_points = int(t_end / dt)
             if total_points > MAX_POINTS:
                 dt = t_end / MAX_POINTS
-                # self.log(f"⚠️ 警告：仿真点数过多，已自动调整 dt = {dt:.2e}s", "warning")
+                self.log(f"⚠️ 警告：仿真点数过多，已自动调整 dt = {dt:.2e}s", "warning")
             
             t_data = np.arange(0, t_end, dt)
             y_list = []
