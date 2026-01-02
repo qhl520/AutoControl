@@ -2,7 +2,7 @@ import numpy as np
 
 class CustomSimulator:
     """
-    通用 SISO 线性系统仿真器 (基于 RK4)
+    通用 SISO 线性系统仿真器 (改进版：分离输出与状态更新)
     适用于传递函数 G(s) = Num(s) / Den(s)
     """
     def __init__(self, num: list, den: list):
@@ -23,9 +23,7 @@ class CustomSimulator:
         if len(self.num) < len(self.den):
             self.num += [0.0] * (len(self.den) - len(self.num))
 
-        # 构建能控标准型 (Control Canonical Form / Bottom Companion Form)
-        # 状态向量 x 的导数 = A*x + B*u
-        # 输出 y = C*x + D*u
+        # 构建能控标准型 (Control Canonical Form)
         self.A = np.zeros((self.n, self.n))
         self.B = np.zeros((self.n, 1))
         self.C = np.zeros((1, self.n))
@@ -43,15 +41,19 @@ class CustomSimulator:
         
         self.state = np.zeros((self.n, 1))
 
-    def step(self, u_in, dt):
+    def compute_output(self, u_in):
         """
-        执行一步仿真
-        输入: u_in (当前时刻输入), dt (步长)
-        输出: y_out (当前时刻输出)
+        计算当前时刻的输出 y(t) = C*x(t) + D*u(t)
+        不更新状态，无副作用。
         """
         u = float(u_in)
-        
-        # RK4 积分
+        return float(self.C @ self.state + self.D * u)
+
+    def update_state(self, u_in, dt):
+        """
+        更新状态 x(t) -> x(t+dt) 使用 RK4 算法
+        """
+        u = float(u_in)
         def dyn(x): return self.A @ x + self.B * u
         
         if self.n > 0:
@@ -60,13 +62,6 @@ class CustomSimulator:
             k3 = dyn(self.state + 0.5*dt*k2)
             k4 = dyn(self.state + dt*k3)
             self.state += (dt/6) * (k1 + 2*k2 + 2*k3 + k4)
-        
-        # 计算输出
-        y = float(self.C @ self.state + self.D * u)
-        return y
-    
-    def reset(self):
-        self.state = np.zeros((self.n, 1))
 
 class PerformanceAnalyzer:
     """性能指标计算"""
@@ -74,6 +69,7 @@ class PerformanceAnalyzer:
         self.t = t
         self.y = y
         self.target = target
+        # 取最后 10% 数据计算稳态
         lookback = max(1, int(len(y) * 0.1))
         self.y_final = np.mean(y[-lookback:])
 

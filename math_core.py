@@ -48,7 +48,6 @@ class PolynomialUtils:
         n = len(poly)
         terms = []
         
-        # 降幂显示
         for i in range(n - 1, -1, -1):
             c = poly[i]
             if abs(c) < 1e-6: continue 

@@ -18,7 +18,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v3.0 (Structural Sim)")
+        self.root.title("SISO 自动控制系统设计平台 Pro v3.1 (Ultimate Sim)")
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -42,7 +42,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.0", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.1", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -163,14 +163,10 @@ class AutoControlApp:
             self.log(f"🔒 劳斯判据(理论)：{status}", "success" if is_stable else "warning")
             if not is_stable: self.log("⚠️ 理论闭环不稳定！", "warning")
 
-            # 4. 时域仿真 (结构框图仿真 - 核心非线性逻辑)
-            # 实例化两个独立的系统：控制器 和 被控对象
-            # Controller: Input = error, Output = u_raw
+            # 4. 时域仿真 (【升级版】结构化时序仿真)
             sim_ctrl = CustomSimulator(Bc, Ac)
-            # Plant: Input = u_actual, Output = y
             sim_plant = CustomSimulator(num, den)
 
-            # 仿真时间设置
             calc_dt = ts / 200.0
             dt = min(0.01, calc_dt)  
             t_end = ts * 4.0
@@ -179,35 +175,42 @@ class AutoControlApp:
             y_list = []
             u_list = []
             
-            # 初始状态
-            y_curr = 0.0
+            # 初始化：先计算 t=0 时刻的输出
+            # 假设初始状态为0，u=0，则 y=0
+            # 严格来说应先初始化 y_curr
+            y_curr = sim_plant.compute_output(0.0)
             
-            self.log("⚙️ 启动结构化非线性仿真...", "info")
+            self.log("⚙️ 启动高精度非线性仿真...", "info")
             
-            # --- 核心仿真循环 ---
+            # --- 核心仿真循环 (Corrected Timing) ---
             for t in t_data:
-                # A. 生成参考输入 r(t)
+                # 1. 获取参考输入 r(t)
                 r_val = t if in_type == 'ramp' else 1.0
                 
-                # B. 计算误差
+                # 2. 计算误差 e(t) (基于当前的 y)
                 error = r_val - y_curr
                 
-                # C. 控制器计算 (输入误差，输出控制量)
-                # 注意：这里控制器内部状态会积分误差，若u被限幅，这里会产生Windup现象
-                u_raw = sim_ctrl.step(error, dt)
+                # 3. 计算控制器输出 u(t) (基于当前的误差)
+                u_raw = sim_ctrl.compute_output(error)
                 
-                # D. 执行器限幅 (真实的非线性环节)
+                # 4. 执行器限幅
                 if u_raw > ulim: u_act = ulim
                 elif u_raw < -ulim: u_act = -ulim
                 else: u_act = u_raw
                 
-                # E. 被控对象响应 (输入实际控制量，输出y)
-                y_curr = sim_plant.step(u_act, dt)
-                
-                # F. 记录数据
+                # 5. 记录数据 (当前的 y 和 u)
                 y_list.append(y_curr)
                 u_list.append(u_act)
-            # --------------------
+                
+                # 6. 更新状态 x(t) -> x(t+dt)
+                sim_ctrl.update_state(error, dt)
+                sim_plant.update_state(u_act, dt)
+                
+                # 7. 准备下一时刻输出 (for next loop)
+                # 注意：如果对象D矩阵非零，u_act的变化会立即反映在输出上
+                # 但通常物理对象D=0。这里我们取更新状态后的输出作为 y(t+dt)
+                y_curr = sim_plant.compute_output(u_act)
+            # ------------------------------------
 
             y_data = np.array(y_list)
             u_data = np.array(u_list)
