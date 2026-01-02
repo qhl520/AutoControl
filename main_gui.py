@@ -20,7 +20,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v4.1 (Aesthetic UI)") 
+        self.root.title("SISO 自动控制系统设计平台 Pro v4.2 (Ultimate Robust)") 
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -44,7 +44,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v4.1", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v4.2", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -159,20 +159,27 @@ class AutoControlApp:
         self.root.update()
 
         try:
-            # 1. 获取输入
-            num = [float(x) for x in self.entry_num.get().replace(',',' ').split()]
-            den = [float(x) for x in self.entry_den.get().replace(',',' ').split()]
-            mp = float(self.entry_mp.get())
-            ts = float(self.entry_ts.get())
-            ulim = float(self.entry_ulim.get())
-            in_type = self.var_input.get()
+            # 1. 获取输入 (含防呆校验)
+            try:
+                num = [float(x) for x in self.entry_num.get().replace(',',' ').split()]
+                den = [float(x) for x in self.entry_den.get().replace(',',' ').split()]
+                mp = float(self.entry_mp.get())
+                ts = float(self.entry_ts.get())
+                ulim = float(self.entry_ulim.get())
+                in_type = self.var_input.get()
+            except ValueError:
+                raise ValueError("输入格式错误：请输入有效的数字，不要包含非数字字符。")
+
+            if ts <= 1e-3: raise ValueError("调节时间 Ts 必须 > 0.001s")
+            if mp <= 0.01 or mp >= 100: raise ValueError("超调量 MP 必须在 0.01% - 100% 之间")
+            if ulim <= 0: raise ValueError("控制量限幅值必须为正数")
 
             self.log(f"✅ 对象: {PolynomialUtils.to_str(num)} / {PolynomialUtils.to_str(den)}")
 
             # 2. 设计控制器
             Bc, Ac, r_added, zeta, wn, desired_poly = design_controller(num, den, mp, ts, in_type)
             
-            # [鲁棒性修正]: 系数归一化
+            # [鲁棒性]: 系数归一化，防止仿真器因浮点误差报错
             if abs(Ac[-1]) > 1e-9:
                 scale_factor = Ac[-1]
                 Ac = [c / scale_factor for c in Ac]
@@ -181,14 +188,13 @@ class AutoControlApp:
             self.update_controller_info(Bc, Ac, r_added, zeta, wn)
             self.log(f"> 设计目标：ζ={zeta:.3f}, ωn={wn:.2f}", "success")
 
-            # 3. 丢番图方程验证 (略)
+            # 3. 丢番图方程验证
             self.log("-" * 55)
             self.log("🔍 验证环节：丢番图方程求解 (LHS vs RHS)")
             LHS_part1 = PolynomialUtils.multiply(den, Ac)
             LHS_part2 = PolynomialUtils.multiply(num, Bc)
             actual_poly = PolynomialUtils.add(LHS_part1, LHS_part2)
             
-            # ... 打印验证表 ...
             len_max = max(len(actual_poly), len(desired_poly))
             act_pad = [0.0]*(len_max - len(actual_poly)) + actual_poly
             des_pad = [0.0]*(len_max - len(desired_poly)) + desired_poly
@@ -221,14 +227,14 @@ class AutoControlApp:
             self.log(f"🔒 劳斯稳定性检查：{status}", "success" if is_stable else "warning")
             if not is_stable: self.log("⚠️ 警告：闭环理论不稳定！", "warning")
 
-            # 6. 时域仿真
+            # 6. 时域仿真 (自适应步长 + 工业级抗饱和)
             sim_ctrl = CustomSimulator(Bc, Ac)
             sim_plant = CustomSimulator(num, den)
 
-            # 动态步长计算
+            # [鲁棒性]: 自适应计算 dt，防止刚性系统崩溃
             dt_perf = ts / 200.0
-            max_plant_coeff = max(np.abs(den))
-            max_ctrl_coeff = max(np.abs(Ac))
+            max_plant_coeff = max(np.abs(den)) if den else 0
+            max_ctrl_coeff = max(np.abs(Ac)) if Ac else 0
             global_max_coeff = max(max_plant_coeff, max_ctrl_coeff)
             
             dt_limit = 0.01
@@ -239,27 +245,46 @@ class AutoControlApp:
             dt = min(dt_perf, dt_limit)
             dt = max(1e-7, dt)
             
-            t_end = ts * 4.0
+            # [鲁棒性]: 自适应仿真时长，防止饱和导致响应变慢被截断
+            t_end = max(ts * 8.0, 5.0) 
             t_data = np.arange(0, t_end, dt)
             y_list = []
             u_list = []
             y_curr = sim_plant.compute_output(0.0)
             
-            self.log(f"⚙️ 启动仿真 (dt={dt:.1e}s)...", "info")
+            self.log(f"⚙️ 启动仿真 (dt={dt:.1e}s, t_end={t_end:.1f}s)...", "info")
             
             for t in t_data:
                 r_val = t if in_type == 'ramp' else 1.0
                 error = r_val - y_curr
                 u_raw = sim_ctrl.compute_output(error)
                 
-                if u_raw > ulim: u_act = ulim
-                elif u_raw < -ulim: u_act = -ulim
-                else: u_act = u_raw
+                # 执行器物理限幅
+                in_saturation = False
+                if u_raw > ulim: 
+                    u_act = ulim
+                    in_saturation = True
+                elif u_raw < -ulim: 
+                    u_act = -ulim
+                    in_saturation = True
+                else: 
+                    u_act = u_raw
                 
                 y_list.append(y_curr)
                 u_list.append(u_act)
                 
-                sim_ctrl.update_state(error, dt)
+                # [抗饱和]: Clamping (条件积分) 逻辑
+                # 当执行器饱和 且 控制器试图往饱和更深处推时 -> 暂停积分 (状态不更新)
+                should_update = True
+                if in_saturation:
+                    # 简单的启发式判断：同号意味着试图更用力推
+                    if (u_act > 0 and u_raw > ulim and error > 0) or \
+                       (u_act < 0 and u_raw < -ulim and error < 0):
+                        should_update = False
+                
+                if should_update:
+                    sim_ctrl.update_state(error, dt)
+                
                 sim_plant.update_state(u_act, dt)
                 y_curr = sim_plant.compute_output(u_act)
 
@@ -273,24 +298,24 @@ class AutoControlApp:
                 target_curve = np.ones_like(t_data)
                 target_val = 1.0
 
-            # 7. 绘图与美学优化
+            # 7. 绘图
             self.setup_plot_style("系统响应 y(t)", self.ax1)
             self.ax1.plot(t_data, target_curve, 'r--', label='参考输入')
             self.ax1.plot(t_data, y_data, 'b', linewidth=2, label='系统输出')
             self.ax1.legend(prop={'size': 9})
             
-            self.setup_plot_style("控制量 u(t) [含限幅]", self.ax2)
+            self.setup_plot_style("控制量 u(t) [Clamping抗饱和]", self.ax2)
             self.ax2.plot(t_data, u_data, 'g', linewidth=1.5, label='控制量')
             self.ax2.axhline(ulim, color='k', linestyle=':', alpha=0.3, label='限幅值')
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
             self.ax2.legend(prop={'size': 9})
 
-            # 计算所有指标
+            # 8. 指标计算与显示
             analyzer = PerformanceAnalyzer(t_data, y_data, target_val)
             metrics = analyzer.get_metrics()
             
             if in_type == 'step':
-                # 计算 Tr
+                # 计算上升时间 Tr
                 y_final = metrics['steady_val']
                 tr = 0.0
                 if abs(y_final) > 1e-6:
@@ -301,22 +326,19 @@ class AutoControlApp:
 
                 self.log(f"📊 仿真结果: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tp={metrics['tp']:.2f}s | Tr={tr:.2f}s")
                 
-                # --- 绘图优化 ---
-                # 1. 绘制 Tp 线 (仅标注 "Tp" 字样，保持画面清爽)
+                # 绘图标注
                 tp = metrics['tp']
                 peak_val = y_data[np.argmax(y_data)]
                 self.ax1.axvline(x=tp, color='green', linestyle='--', alpha=0.6, linewidth=1)
                 self.ax1.plot(tp, peak_val, 'ro', markersize=4)
                 self.ax1.text(tp, peak_val*1.02, "Tp", color='green', fontsize=9, ha='center', fontweight='bold')
 
-                # 2. 绘制 Ts 线 (仅标注 "Ts" 字样)
                 ts = metrics['ts']
                 if ts > 0:
                     self.ax1.axvline(x=ts, color='magenta', linestyle='--', alpha=0.6, linewidth=1)
                     self.ax1.text(ts, target_val*0.9, "Ts", color='magenta', fontsize=9, ha='right', fontweight='bold')
 
-                # 3. 统一信息框 (右下角，包含所有数据)
-                # 使用等宽字体 (monospace) 对齐数值
+                # 右下角统一信息框 (等宽字体对齐)
                 info = (f"Performance:\n"
                         f"------------\n"
                         f"OS : {metrics['overshoot']:5.2f} %\n"
@@ -324,7 +346,6 @@ class AutoControlApp:
                         f"Tr : {tr:5.2f} s\n"
                         f"Ts : {metrics['ts']:5.2f} s")
                 
-                # 放置在 axes 坐标系的右下角 (0.96, 0.04)
                 self.ax1.text(0.96, 0.04, info, transform=self.ax1.transAxes,
                               verticalalignment='bottom', horizontalalignment='right',
                               bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.9, ec="#bdc3c7"),
