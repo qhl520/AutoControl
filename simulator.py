@@ -93,7 +93,7 @@ class PerformanceAnalyzer:
         
         return {
             "steady_val": self.y_final, 
-            "error": abs(self.target - self.y_final),
+            "error": abs(self.target - self.y[-1]),
             "overshoot": overshoot, 
             "ts": ts, 
             "tp": tp,
