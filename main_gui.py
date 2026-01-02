@@ -18,7 +18,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v3.2 (Robust Sim)")
+        self.root.title("SISO 自动控制系统设计平台 Pro v3.4 (Ultimate Clean)")
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -42,7 +42,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.2", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.4", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -140,7 +140,6 @@ class AutoControlApp:
         self.root.update()
 
         try:
-            # 1. 参数解析
             num = [float(x) for x in self.entry_num.get().replace(',',' ').split()]
             den = [float(x) for x in self.entry_den.get().replace(',',' ').split()]
             mp = float(self.entry_mp.get())
@@ -150,12 +149,12 @@ class AutoControlApp:
 
             self.log(f"✅ 对象: {PolynomialUtils.to_str(num)} / {PolynomialUtils.to_str(den)}")
 
-            # 2. 控制器设计
+            # 设计控制器
             Bc, Ac, r_added, zeta, wn = design_controller(num, den, mp, ts, in_type)
             self.update_controller_info(Bc, Ac, r_added, zeta, wn)
             self.log(f"✅ 设计完成：ζ={zeta:.3f}, ωn={wn:.2f}", "success")
 
-            # 3. 稳定性校验 (理论线性稳定性)
+            # 稳定性校验
             T_num = PolynomialUtils.multiply(Bc, num)
             T_den = PolynomialUtils.add(PolynomialUtils.multiply(Ac, den), T_num)
             is_stable = RouthStability.check(T_den)
@@ -163,7 +162,7 @@ class AutoControlApp:
             self.log(f"🔒 劳斯判据(理论)：{status}", "success" if is_stable else "warning")
             if not is_stable: self.log("⚠️ 理论闭环不稳定！", "warning")
 
-            # 4. 时域仿真 (结构化时序仿真 + 抗饱和)
+            # 时域仿真
             sim_ctrl = CustomSimulator(Bc, Ac)
             sim_plant = CustomSimulator(num, den)
 
@@ -174,24 +173,16 @@ class AutoControlApp:
             
             y_list = []
             u_list = []
-            
-            # 初始化：假设初始状态全为0
             y_curr = sim_plant.compute_output(0.0)
             
             self.log("⚙️ 启动抗饱和高精度仿真...", "info")
             
-            # --- 核心仿真循环 (加入Anti-windup) ---
             for t in t_data:
-                # 1. 获取参考输入
                 r_val = t if in_type == 'ramp' else 1.0
-                
-                # 2. 计算误差
                 error = r_val - y_curr
                 
-                # 3. 计算控制器期望输出
                 u_raw = sim_ctrl.compute_output(error)
                 
-                # 4. 执行器限幅
                 in_saturation = False
                 if u_raw > ulim: 
                     u_act = ulim
@@ -202,26 +193,18 @@ class AutoControlApp:
                 else: 
                     u_act = u_raw
                 
-                # 5. 记录数据
                 y_list.append(y_curr)
                 u_list.append(u_act)
                 
-                # 6. 更新状态 (抗积分饱和 Clamping)
-                # 如果饱和且误差试图使控制量继续增加（加剧饱和），则“夹住”控制器的积分状态
-                # 这里使用简单的Clamping策略：将输入控制器的误差置为0
+                # 抗积分饱和 Clamping 逻辑
                 ctrl_input = error
                 if in_saturation:
-                    # 简单启发式：若已达到正限幅且误差仍为正，则停止积分
-                    # (注意：这假设控制器正向增益。对于反向增益系统需调整逻辑，但作为通用工具此策略已足够鲁棒)
                     if (u_act > 0 and error > 0) or (u_act < 0 and error < 0):
                         ctrl_input = 0.0
 
                 sim_ctrl.update_state(ctrl_input, dt)
                 sim_plant.update_state(u_act, dt)
-                
-                # 7. 准备下一时刻输出
                 y_curr = sim_plant.compute_output(u_act)
-            # ------------------------------------
 
             y_data = np.array(y_list)
             u_data = np.array(u_list)
@@ -233,7 +216,6 @@ class AutoControlApp:
                 target_curve = np.ones_like(t_data)
                 target_val = 1.0
 
-            # 5. 绘图
             self.setup_plot_style("系统响应 y(t)", self.ax1)
             self.ax1.plot(t_data, target_curve, 'r--', label='参考输入')
             self.ax1.plot(t_data, y_data, 'b', linewidth=2, label='系统输出')
@@ -245,7 +227,6 @@ class AutoControlApp:
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
             self.ax2.legend(prop={'size': 9})
 
-            # 6. 指标计算
             analyzer = PerformanceAnalyzer(t_data, y_data, target_val)
             metrics = analyzer.get_metrics()
             if in_type == 'step':
