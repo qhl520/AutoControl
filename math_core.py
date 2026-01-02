@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Union
 
 class PolynomialUtils:
-    """多项式基础运算工具 (升幂排列: a0 + a1*s + a2*s^2 ...)"""
+    """多项式基础运算工具"""
     @staticmethod
     def multiply(p1: List[float], p2: List[float]) -> List[float]:
         n = len(p1) + len(p2) - 1
@@ -22,7 +22,7 @@ class PolynomialUtils:
     
     @staticmethod
     def derivative(poly: List[float]) -> List[float]:
-        """多项式求导 (升幂): d/ds (a0 + a1*s + ...) = a1 + 2*a2*s + ..."""
+        """多项式求导"""
         n = len(poly)
         if n <= 1: return [0.0]
         res = []
@@ -36,7 +36,7 @@ class PolynomialUtils:
 
     @staticmethod
     def to_str(poly: List[float], var: str = 's') -> str:
-        # 上标映射表
+        """美化版多项式转字符串"""
         superscript_map = {
             '0': '⁰', '1': '¹', '2': '²', '3': '³', '4': '⁴',
             '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹'
@@ -48,53 +48,35 @@ class PolynomialUtils:
         n = len(poly)
         terms = []
         
+        # 降幂显示
         for i in range(n - 1, -1, -1):
             c = poly[i]
-            if abs(c) < 1e-6: continue # 忽略极小系数
+            if abs(c) < 1e-6: continue 
             
-            # 1. 处理正负号
             is_negative = c < 0
             abs_c = abs(c)
             
-            # 2. 格式化数值 (去除末尾0)
             val_str = f"{abs_c:.4f}".rstrip('0').rstrip('.')
             if val_str == '': val_str = '0'
             
-            # 3. 构建显示组件
-            # 系数部分
-            if i == 0:
-                # 常数项：必须显示数字
-                coeff_str = val_str
+            if i == 0: coeff_str = val_str
             else:
-                # 高阶项：如果是1则省略 (例如 1s -> s)
-                if abs(abs_c - 1.0) < 1e-6:
-                    coeff_str = ""
-                else:
-                    coeff_str = val_str
+                if abs(abs_c - 1.0) < 1e-6: coeff_str = ""
+                else: coeff_str = val_str
             
-            # 变量部分
-            if i == 0:
-                var_str = ""
-            elif i == 1:
-                var_str = var
-            else:
-                var_str = f"{var}{to_super(i)}"
+            if i == 0: var_str = ""
+            elif i == 1: var_str = var
+            else: var_str = f"{var}{to_super(i)}"
                 
-            # 组合
             term_str = f"{coeff_str}{var_str}"
             terms.append((is_negative, term_str))
             
         if not terms: return "0"
         
-        # 4. 拼接
         res = []
         for idx, (is_neg, s) in enumerate(terms):
-            if idx == 0:
-                # 第一项前缀
-                prefix = "-" if is_neg else ""
-            else:
-                # 后续项前缀
-                prefix = " - " if is_neg else " + "
+            if idx == 0: prefix = "-" if is_neg else ""
+            else: prefix = " - " if is_neg else " + "
             res.append(f"{prefix}{s}")
             
         return "".join(res)
@@ -102,11 +84,9 @@ class PolynomialUtils:
 class RouthStability:
     @staticmethod
     def check(coeff_asc: List[float]) -> bool:
+        """劳斯判据稳定性检查 (完整版)"""
         coeff = coeff_asc[::-1]
-        
-        while len(coeff) > 0 and abs(coeff[0]) < 1e-9:
-            coeff.pop(0)
-            
+        while len(coeff) > 0 and abs(coeff[0]) < 1e-9: coeff.pop(0)
         if not coeff: return True
             
         n = len(coeff)
@@ -115,23 +95,16 @@ class RouthStability:
 
         R[0, :len(coeff[0::2])] = coeff[0::2]
         R[1, :len(coeff[1::2])] = coeff[1::2]
-        
         EPS = 1e-9
 
         for i in range(2, n):
-            # --- 全零行处理逻辑 ---
-            if np.all(np.abs(R[i-1, :]) < EPS):
-                # 构造辅助多项式并求导
-                # 辅助方程系数即上一行 R[i-2, :]
-                # 对应阶次 n - (i - 2) - 1, 间隔2
+            if np.all(np.abs(R[i-1, :]) < EPS): # 全零行处理
                 for j in range(cols):
                     power = (n - 1 - (i - 2)) - 2 * j 
                     if power < 0: continue
-                    R[i-1, j] = R[i-2, j] * power # 求导替换
-            # --------------------
+                    R[i-1, j] = R[i-2, j] * power 
 
-            if abs(R[i-1, 0]) < EPS:
-                 R[i-1, 0] = 1e-6 
+            if abs(R[i-1, 0]) < EPS: R[i-1, 0] = 1e-6 
 
             for j in range(cols - 1):
                 a, b = R[i-2, 0], R[i-2, j+1]
@@ -140,7 +113,6 @@ class RouthStability:
 
         first_col = R[:, 0]
         if np.any(np.isnan(first_col)): return False
-        
         return np.all(first_col > -EPS)
 
 class PoleUtils:

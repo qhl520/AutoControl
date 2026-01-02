@@ -3,7 +3,6 @@ import math
 from math_core import PolynomialUtils, PoleUtils
 
 def count_integrators(den: list) -> int:
-    """【智能检测】被控对象已有的积分环节数量"""
     cnt = 0
     for c in den:
         if abs(c) < 1e-6: cnt += 1
@@ -39,7 +38,6 @@ def design_controller(num, den, mp, ts, input_type='step'):
         A_cl = PolynomialUtils.multiply(A_cl, [-p, 1.0])
     A_cl = [c.real for c in A_cl]
 
-    # 动态计算远极点位置
     dom_real_abs = abs(zeta * wn)
     far_pole_loc = max(10.0, 10.0 * dom_real_abs)
     
@@ -52,12 +50,10 @@ def design_controller(num, den, mp, ts, input_type='step'):
     
     for i in range(min(len(A_cl), num_vars)): b_vec[i] = A_cl[i]
     
-    # 填充 Dp_ext 列
     for j in range(deg_ctrl + 1):
         for k in range(len(Dp_ext)):
             if j+k < num_vars: M[j+k, j] = Dp_ext[k]
             
-    # 填充 Np 列
     off = deg_ctrl + 1
     for j in range(deg_ctrl + 1):
         for k in range(len(num)):

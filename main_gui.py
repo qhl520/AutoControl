@@ -18,7 +18,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v2.3 (Beautified)")
+        self.root.title("SISO 自动控制系统设计平台 Pro v3.0 (Structural Sim)")
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -42,7 +42,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v2.3", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.0", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -72,17 +72,15 @@ class AutoControlApp:
         self.btn_run = ttk.Button(btn_frame, text="🚀 开始设计", command=self.run_design, bootstyle="success")
         self.btn_run.pack(fill=X, ipady=3)
 
-        # 5. 参数显示 (字体加大，便于显示公式)
+        # 5. 参数显示
         result_frame = ttk.Labelframe(self.left_panel, text="📊 控制器参数", padding=5)
         result_frame.pack(fill=X, pady=(0, 6))
-        # 将字体从 Consolas 8 调大到 10，方便阅读上标
         self.controller_info = ttk.Label(result_frame, text="...", font=("Consolas", 10), justify=LEFT, wraplength=1000)
         self.controller_info.pack(anchor=W, fill=X)
 
-        # 6. 日志 (字体加大)
+        # 6. 日志
         log_frame = ttk.Labelframe(self.left_panel, text="📝 设计日志", padding=8)
         log_frame.pack(fill=BOTH, expand=YES, pady=(5, 0))
-        # 将字体从 Consolas 9 调大到 10
         self.txt_log = scrolledtext.ScrolledText(log_frame, font=("Consolas", 10), wrap=tk.WORD, relief=tk.FLAT, bg="#f8f9fa", bd=0)
         self.txt_log.pack(fill=BOTH, expand=YES)
 
@@ -132,7 +130,7 @@ class AutoControlApp:
         info = (
             f"Gc(s) = B(s)/A(s) | ζ={zeta:.3f} | ωn={wn:.2f}\n"
             f"积分补偿+{r_added}个\n"
-            f"B(s)={PolynomialUtils.to_str(Bc)}\nA(s)={PolynomialUtils.to_str(Ac)}"
+            f"B(s)={PolynomialUtils.to_str(Bc)} | A(s)={PolynomialUtils.to_str(Ac)}"
         )
         self.controller_info.config(text=info)
 
@@ -142,6 +140,7 @@ class AutoControlApp:
         self.root.update()
 
         try:
+            # 1. 参数解析
             num = [float(x) for x in self.entry_num.get().replace(',',' ').split()]
             den = [float(x) for x in self.entry_den.get().replace(',',' ').split()]
             mp = float(self.entry_mp.get())
@@ -149,46 +148,69 @@ class AutoControlApp:
             ulim = float(self.entry_ulim.get())
             in_type = self.var_input.get()
 
-            # 日志中使用新的 to_str
             self.log(f"✅ 对象: {PolynomialUtils.to_str(num)} / {PolynomialUtils.to_str(den)}")
 
+            # 2. 控制器设计
             Bc, Ac, r_added, zeta, wn = design_controller(num, den, mp, ts, in_type)
             self.update_controller_info(Bc, Ac, r_added, zeta, wn)
             self.log(f"✅ 设计完成：ζ={zeta:.3f}, ωn={wn:.2f}", "success")
 
+            # 3. 稳定性校验 (理论线性稳定性)
             T_num = PolynomialUtils.multiply(Bc, num)
             T_den = PolynomialUtils.add(PolynomialUtils.multiply(Ac, den), T_num)
             is_stable = RouthStability.check(T_den)
             status = "稳定" if is_stable else "不稳定"
-            self.log(f"🔒 劳斯判据：{status}", "success" if is_stable else "warning")
+            self.log(f"🔒 劳斯判据(理论)：{status}", "success" if is_stable else "warning")
+            if not is_stable: self.log("⚠️ 理论闭环不稳定！", "warning")
 
-            if not is_stable: self.log("⚠️ 系统不稳定，结果将发散！", "warning")
+            # 4. 时域仿真 (结构框图仿真 - 核心非线性逻辑)
+            # 实例化两个独立的系统：控制器 和 被控对象
+            # Controller: Input = error, Output = u_raw
+            sim_ctrl = CustomSimulator(Bc, Ac)
+            # Plant: Input = u_actual, Output = y
+            sim_plant = CustomSimulator(num, den)
 
-            sim = CustomSimulator(T_num, T_den, u_limit=ulim)
-            
+            # 仿真时间设置
             calc_dt = ts / 200.0
             dt = min(0.01, calc_dt)  
             t_end = ts * 4.0
             t_data = np.arange(0, t_end, dt)
             
             y_list = []
+            u_list = []
             
+            # 初始状态
+            y_curr = 0.0
+            
+            self.log("⚙️ 启动结构化非线性仿真...", "info")
+            
+            # --- 核心仿真循环 ---
             for t in t_data:
-                ref = t if in_type == 'ramp' else 1.0
-                y_val = sim.step(ref, dt)
-                y_list.append(y_val)
-            
-            # 控制量 U(s) 仿真
-            U_num = PolynomialUtils.multiply(Bc, den) 
-            sim_u = CustomSimulator(U_num, T_den, u_limit=ulim)
-            u_data = []
-            for t in t_data:
-                ref = t if in_type == 'ramp' else 1.0
-                val = sim_u.step(ref, dt)
-                u_data.append(val)
-            
+                # A. 生成参考输入 r(t)
+                r_val = t if in_type == 'ramp' else 1.0
+                
+                # B. 计算误差
+                error = r_val - y_curr
+                
+                # C. 控制器计算 (输入误差，输出控制量)
+                # 注意：这里控制器内部状态会积分误差，若u被限幅，这里会产生Windup现象
+                u_raw = sim_ctrl.step(error, dt)
+                
+                # D. 执行器限幅 (真实的非线性环节)
+                if u_raw > ulim: u_act = ulim
+                elif u_raw < -ulim: u_act = -ulim
+                else: u_act = u_raw
+                
+                # E. 被控对象响应 (输入实际控制量，输出y)
+                y_curr = sim_plant.step(u_act, dt)
+                
+                # F. 记录数据
+                y_list.append(y_curr)
+                u_list.append(u_act)
+            # --------------------
+
             y_data = np.array(y_list)
-            u_data = np.array(u_data)
+            u_data = np.array(u_list)
             
             if in_type == 'ramp':
                 target_curve = t_data
@@ -197,17 +219,19 @@ class AutoControlApp:
                 target_curve = np.ones_like(t_data)
                 target_val = 1.0
 
+            # 5. 绘图
             self.setup_plot_style("系统响应 y(t)", self.ax1)
             self.ax1.plot(t_data, target_curve, 'r--', label='参考输入')
             self.ax1.plot(t_data, y_data, 'b', linewidth=2, label='系统输出')
-            self.ax1.legend()
+            self.ax1.legend(prop={'size': 9})
             
-            self.setup_plot_style("控制量 u(t) [模拟]", self.ax2)
+            self.setup_plot_style("控制量 u(t) [真实]", self.ax2)
             self.ax2.plot(t_data, u_data, 'g', linewidth=1.5, label='控制量')
-            self.ax2.axhline(ulim, color='k', linestyle=':', alpha=0.3)
+            self.ax2.axhline(ulim, color='k', linestyle=':', alpha=0.3, label='限幅值')
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
-            self.ax2.legend()
+            self.ax2.legend(prop={'size': 9})
 
+            # 6. 指标计算
             analyzer = PerformanceAnalyzer(t_data, y_data, target_val)
             metrics = analyzer.get_metrics()
             if in_type == 'step':
