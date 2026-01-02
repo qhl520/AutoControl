@@ -11,7 +11,7 @@ def count_integrators(den: list) -> int:
     return cnt
 
 def design_controller(num, den, mp, ts, input_type='step'):
-    """Diophantine 方程求解器"""
+    """Diophantine 方程求解器 (改进版：动态远极点)"""
     # 1. 期望极点计算
     ln_mp = math.log(mp/100) if mp > 0 else -999
     zeta = -ln_mp / math.sqrt(math.pi**2 + ln_mp**2)
@@ -45,9 +45,16 @@ def design_controller(num, den, mp, ts, input_type='step'):
         A_cl = PolynomialUtils.multiply(A_cl, [-p, 1.0]) # (s-p)
     A_cl = [c.real for c in A_cl] # 转实数
 
+    # 【FIX 2】动态计算远极点位置
+    # 远极点应至少为主导极点实部的 10 倍，且具有一定的最小距离
+    # 避免在高频系统中，硬编码的极点反而成为慢极点
+    dom_real_abs = abs(zeta * wn)
+    far_pole_loc = max(10.0, 10.0 * dom_real_abs)
+    
     # 补全远极点
     while len(A_cl) - 1 < total_order:
-        A_cl = PolynomialUtils.multiply(A_cl, [10.0, 1.0])
+        # 添加极点 (s + far_pole_loc) -> 系数 [far_pole_loc, 1.0] (升幂：常数项在前)
+        A_cl = PolynomialUtils.multiply(A_cl, [far_pole_loc, 1.0])
         
     # 4. 求解 Sylvester 矩阵
     num_vars = (deg_ctrl + 1) * 2
@@ -70,7 +77,7 @@ def design_controller(num, den, mp, ts, input_type='step'):
     try:
         x = np.linalg.solve(M, b_vec)
     except np.linalg.LinAlgError:
-        raise ValueError("设计失败：对象不可控")
+        raise ValueError("设计失败：Sylvester矩阵奇异，对象可能不可控或零极点对消")
 
     A_prime = x[:deg_ctrl+1].tolist()
     B_final = x[deg_ctrl+1:].tolist()
