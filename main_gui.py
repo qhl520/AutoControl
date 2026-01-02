@@ -20,7 +20,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v4.2 (Ultimate Robust)") 
+        self.root.title("SISO 自动控制系统设计平台 Pro v5.0 (Final Logic)") 
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -44,7 +44,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v4.2", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v5.0", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -53,7 +53,7 @@ class AutoControlApp:
         self.entry_den = self.create_labeled_entry(group_plant, "分母系数[升幂]", "0 1 1", "例：1 2 3 → 3s²+2s+1")
 
         # 2. 性能指标
-        group_specs = ttk.Labelframe(self.left_panel, text="🎯 性能指标", padding=8)
+        group_specs = ttk.Labelframe(self.left_panel, text="🎯 性能指标 (仅限阶跃设计)", padding=8)
         group_specs.pack(fill=X, pady=(0, 6))
         self.entry_mp = self.create_labeled_entry(group_specs, "超调量MP(%)", "10", "5-20%")
         self.entry_ts = self.create_labeled_entry(group_specs, "调节时间Ts(s)", "2", "系统稳态时间")
@@ -64,8 +64,8 @@ class AutoControlApp:
         self.var_input = tk.StringVar(value="step")
         input_frame = ttk.Frame(group_sim)
         input_frame.pack(fill=X)
-        ttk.Radiobutton(input_frame, text="阶跃", variable=self.var_input, value="step").pack(side=LEFT, padx=5)
-        ttk.Radiobutton(input_frame, text="斜坡", variable=self.var_input, value="ramp").pack(side=LEFT, padx=5)
+        ttk.Radiobutton(input_frame, text="阶跃响应", variable=self.var_input, value="step").pack(side=LEFT, padx=5)
+        ttk.Radiobutton(input_frame, text="斜坡响应", variable=self.var_input, value="ramp").pack(side=LEFT, padx=5)
         self.entry_ulim = self.create_labeled_entry(group_sim, "控制量限幅", "1000", "执行器最大输出")
 
         # 4. 按钮
@@ -179,7 +179,7 @@ class AutoControlApp:
             # 2. 设计控制器
             Bc, Ac, r_added, zeta, wn, desired_poly = design_controller(num, den, mp, ts, in_type)
             
-            # [鲁棒性]: 系数归一化，防止仿真器因浮点误差报错
+            # [鲁棒性]: 系数归一化
             if abs(Ac[-1]) > 1e-9:
                 scale_factor = Ac[-1]
                 Ac = [c / scale_factor for c in Ac]
@@ -227,11 +227,11 @@ class AutoControlApp:
             self.log(f"🔒 劳斯稳定性检查：{status}", "success" if is_stable else "warning")
             if not is_stable: self.log("⚠️ 警告：闭环理论不稳定！", "warning")
 
-            # 6. 时域仿真 (自适应步长 + 工业级抗饱和)
+            # 6. 时域仿真
             sim_ctrl = CustomSimulator(Bc, Ac)
             sim_plant = CustomSimulator(num, den)
 
-            # [鲁棒性]: 自适应计算 dt，防止刚性系统崩溃
+            # 动态步长
             dt_perf = ts / 200.0
             max_plant_coeff = max(np.abs(den)) if den else 0
             max_ctrl_coeff = max(np.abs(Ac)) if Ac else 0
@@ -245,21 +245,21 @@ class AutoControlApp:
             dt = min(dt_perf, dt_limit)
             dt = max(1e-7, dt)
             
-            # [鲁棒性]: 自适应仿真时长，防止饱和导致响应变慢被截断
+            # 自适应仿真时长
             t_end = max(ts * 8.0, 5.0) 
             t_data = np.arange(0, t_end, dt)
             y_list = []
             u_list = []
             y_curr = sim_plant.compute_output(0.0)
             
-            self.log(f"⚙️ 启动仿真 (dt={dt:.1e}s, t_end={t_end:.1f}s)...", "info")
+            self.log(f"⚙️ 启动仿真 (dt={dt:.1e}s)...", "info")
             
             for t in t_data:
                 r_val = t if in_type == 'ramp' else 1.0
                 error = r_val - y_curr
                 u_raw = sim_ctrl.compute_output(error)
                 
-                # 执行器物理限幅
+                # 执行器限幅
                 in_saturation = False
                 if u_raw > ulim: 
                     u_act = ulim
@@ -273,11 +273,9 @@ class AutoControlApp:
                 y_list.append(y_curr)
                 u_list.append(u_act)
                 
-                # [抗饱和]: Clamping (条件积分) 逻辑
-                # 当执行器饱和 且 控制器试图往饱和更深处推时 -> 暂停积分 (状态不更新)
+                # Clamping 抗饱和
                 should_update = True
                 if in_saturation:
-                    # 简单的启发式判断：同号意味着试图更用力推
                     if (u_act > 0 and u_raw > ulim and error > 0) or \
                        (u_act < 0 and u_raw < -ulim and error < 0):
                         should_update = False
@@ -310,12 +308,12 @@ class AutoControlApp:
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
             self.ax2.legend(prop={'size': 9})
 
-            # 8. 指标计算与显示
+            # 8. [毒辣逻辑修复]: 根据输入类型显示正确的指标
             analyzer = PerformanceAnalyzer(t_data, y_data, target_val)
-            metrics = analyzer.get_metrics()
+            metrics = analyzer.get_metrics() # 计算基本指标
             
             if in_type == 'step':
-                # 计算上升时间 Tr
+                # 阶跃：显示 OS, Ts, Tp, Tr
                 y_final = metrics['steady_val']
                 tr = 0.0
                 if abs(y_final) > 1e-6:
@@ -324,9 +322,9 @@ class AutoControlApp:
                     if len(idx_10) > 0 and len(idx_90) > 0:
                         tr = t_data[idx_90[0]] - t_data[idx_10[0]]
 
-                self.log(f"📊 仿真结果: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tp={metrics['tp']:.2f}s | Tr={tr:.2f}s")
+                self.log(f"📊 [阶跃]指标: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tp={metrics['tp']:.2f}s")
                 
-                # 绘图标注
+                # 绘图线
                 tp = metrics['tp']
                 peak_val = y_data[np.argmax(y_data)]
                 self.ax1.axvline(x=tp, color='green', linestyle='--', alpha=0.6, linewidth=1)
@@ -338,18 +336,31 @@ class AutoControlApp:
                     self.ax1.axvline(x=ts, color='magenta', linestyle='--', alpha=0.6, linewidth=1)
                     self.ax1.text(ts, target_val*0.9, "Ts", color='magenta', fontsize=9, ha='right', fontweight='bold')
 
-                # 右下角统一信息框 (等宽字体对齐)
-                info = (f"Performance:\n"
-                        f"------------\n"
+                info = (f"Step Response:\n"
+                        f"--------------\n"
                         f"OS : {metrics['overshoot']:5.2f} %\n"
                         f"Tp : {metrics['tp']:5.2f} s\n"
                         f"Tr : {tr:5.2f} s\n"
                         f"Ts : {metrics['ts']:5.2f} s")
+
+            elif in_type == 'ramp':
+                # 斜坡：显示稳态跟踪误差 (Steady State Error)
+                # 计算末端误差
+                final_error = abs(t_data[-1] - y_data[-1])
                 
-                self.ax1.text(0.96, 0.04, info, transform=self.ax1.transAxes,
-                              verticalalignment='bottom', horizontalalignment='right',
-                              bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.9, ec="#bdc3c7"),
-                              fontsize=9, family='monospace', color='#2c3e50')
+                self.log(f"📊 [斜坡]指标: 稳态跟踪误差 ess ≈ {final_error:.5f}")
+                self.log("ℹ️ 提示: 斜坡响应不适用超调量/调节时间指标")
+
+                info = (f"Ramp Response:\n"
+                        f"--------------\n"
+                        f"Tracking Err:\n"
+                        f"ess ≈ {final_error:.4f}")
+
+            # 统一显示信息框
+            self.ax1.text(0.96, 0.04, info, transform=self.ax1.transAxes,
+                          verticalalignment='bottom', horizontalalignment='right',
+                          bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.9, ec="#bdc3c7"),
+                          fontsize=9, family='monospace', color='#2c3e50')
 
             self.canvas.draw()
 
