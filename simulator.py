@@ -50,23 +50,21 @@ class PerformanceAnalyzer:
         self.t = t
         self.y = y
         self.target = target
-        # 使用最后 5% 的数据计算稳态，避免震荡影响
-        lookback = max(1, int(len(y) * 0.05))
+        lookback = max(1, int(len(y) * 0.1))
         self.y_final = np.mean(y[-lookback:])
 
     def get_metrics(self, ts_tol=0.02):
-        # 1. 峰值时间 Tp
+        # 1. 计算峰值和峰值时间 Tp
         idx_max = np.argmax(self.y)
-        tp = self.t[idx_max]
-        
-        # 2. 超调量 OS
         y_max = self.y[idx_max]
-        if abs(self.y_final) > 1e-9:
-            overshoot = (y_max - self.y_final) / self.y_final * 100 
-        else: 
-            overshoot = 0.0
+        tp = self.t[idx_max]
 
-        # 3. 调节时间 Ts (倒序查找)
+        # 2. 计算超调量
+        if abs(self.y_final) > 1e-9:
+            overshoot = (y_max - self.y_final)/self.y_final * 100 
+        else: overshoot = 0.0
+
+        # 3. 计算调节时间 Ts
         ts = 0
         upper, lower = self.y_final*(1+ts_tol), self.y_final*(1-ts_tol)
         in_band = True
@@ -76,26 +74,7 @@ class PerformanceAnalyzer:
                 in_band = False
                 break
         if in_band: ts = 0 
-
-        # 4. 上升时间 Tr (10% -> 90%)
-        tr = 0.0
-        if abs(self.y_final) > 1e-6:
-            # 找到第一个大于 10% 的点
-            idx_10_list = np.where(self.y >= 0.1 * self.y_final)[0]
-            # 找到第一个大于 90% 的点
-            idx_90_list = np.where(self.y >= 0.9 * self.y_final)[0]
-            
-            if len(idx_10_list) > 0 and len(idx_90_list) > 0:
-                idx_10 = idx_10_list[0]
-                idx_90 = idx_90_list[0]
-                if idx_90 > idx_10:
-                    tr = self.t[idx_90] - self.t[idx_10]
         
-        return {
-            "steady_val": self.y_final, 
-            "error": abs(self.target - self.y_final),
-            "overshoot": overshoot, 
-            "ts": ts, 
-            "tp": tp,
-            "tr": tr  # 新增返回 tr
-        }
+        # 增加 tp 的返回
+        return {"steady_val": self.y_final, "error": abs(self.target - self.y_final),
+                "overshoot": overshoot, "ts": ts, "tp": tp}
