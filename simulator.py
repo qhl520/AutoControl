@@ -54,11 +54,17 @@ class PerformanceAnalyzer:
         self.y_final = np.mean(y[-lookback:])
 
     def get_metrics(self, ts_tol=0.02):
-        y_max = np.max(self.y)
+        # 1. 计算峰值和峰值时间 Tp
+        idx_max = np.argmax(self.y)
+        y_max = self.y[idx_max]
+        tp = self.t[idx_max]
+
+        # 2. 计算超调量
         if abs(self.y_final) > 1e-9:
             overshoot = (y_max - self.y_final)/self.y_final * 100 
         else: overshoot = 0.0
 
+        # 3. 计算调节时间 Ts
         ts = 0
         upper, lower = self.y_final*(1+ts_tol), self.y_final*(1-ts_tol)
         in_band = True
@@ -68,5 +74,7 @@ class PerformanceAnalyzer:
                 in_band = False
                 break
         if in_band: ts = 0 
+        
+        # 增加 tp 的返回
         return {"steady_val": self.y_final, "error": abs(self.target - self.y_final),
-                "overshoot": overshoot, "ts": ts}
+                "overshoot": overshoot, "ts": ts, "tp": tp}

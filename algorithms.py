@@ -10,12 +10,14 @@ def count_integrators(den: list) -> int:
     return cnt
 
 def design_controller(num, den, mp, ts, input_type='step'):
-    """Diophantine 方程求解器 (含数值保护)"""
+    """
+    Diophantine 方程求解器 (含数值保护)
+    返回: B_final, A_final, r_add, zeta, wn, A_cl (期望特征多项式)
+    """
     
     # --- 1. 极点计算 (显式处理临界阻尼，消除 Magic Number) ---
     if mp <= 1e-6:
         # 临界阻尼或过阻尼情况 (zeta=1)
-        # 修正：对于临界阻尼系统(te^-t)，2%调节时间约为 5.834/wn (基于 (1+wt)*exp(-wt)=0.02 求解)
         zeta = 1.0
         wn = 5.834 / ts 
         p_real = -wn
@@ -89,4 +91,5 @@ def design_controller(num, den, mp, ts, input_type='step'):
     B_final = x[deg_ctrl+1:].tolist()
     A_final = PolynomialUtils.multiply(A_prime, s_term)
     
-    return B_final, A_final, r_add, zeta, wn
+    # 修改点：返回 A_cl 供验证
+    return B_final, A_final, r_add, zeta, wn, A_cl

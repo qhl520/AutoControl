@@ -11,7 +11,7 @@ from math_core import PolynomialUtils, RouthStability
 from algorithms import design_controller
 from simulator import CustomSimulator, PerformanceAnalyzer
 
-# 字体设置保持不变
+# 字体设置
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'SimSun'] 
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['font.family'] = 'sans-serif'
@@ -19,7 +19,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v3.5 (Optimized)") # 版本号微调
+        self.root.title("SISO 自动控制系统设计平台 Pro v3.8 (Thesis Edition)") 
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -43,7 +43,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.5", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.8", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -82,7 +82,7 @@ class AutoControlApp:
         # 6. 日志
         log_frame = ttk.Labelframe(self.left_panel, text="📝 设计日志", padding=8)
         log_frame.pack(fill=BOTH, expand=YES, pady=(5, 0))
-        self.txt_log = scrolledtext.ScrolledText(log_frame, font=("Consolas", 10), wrap=tk.WORD, relief=tk.FLAT, bg="#f8f9fa", bd=0)
+        self.txt_log = scrolledtext.ScrolledText(log_frame, font=("Consolas", 9), wrap=tk.WORD, relief=tk.FLAT, bg="#f8f9fa", bd=0)
         self.txt_log.pack(fill=BOTH, expand=YES)
 
     def create_labeled_entry(self, parent, label_text, default_val, hint_text=""):
@@ -124,8 +124,25 @@ class AutoControlApp:
     def log(self, msg, level="info"):
         color_map = {"info":"#2c3e50", "success":"#27ae60", "warning":"#f39c12", "error":"#e74c3c"}
         self.txt_log.tag_config(level, foreground=color_map.get(level, "#2c3e50"))
-        self.txt_log.insert(tk.END, f"> {msg}\n", level)
+        self.txt_log.insert(tk.END, f"{msg}\n", level)
         self.txt_log.see(tk.END)
+
+    def log_transfer_function(self, name, num, den):
+        """在日志中打印漂亮的分数形式传递函数"""
+        s_num = PolynomialUtils.to_str(num)
+        s_den = PolynomialUtils.to_str(den)
+        len_num = len(s_num)
+        len_den = len(s_den)
+        width = max(len_num, len_den) + 4
+        
+        divider = "-" * width
+        fmt_num = s_num.center(width)
+        fmt_den = s_den.center(width)
+        
+        self.log(f"💠 {name}:")
+        self.log(f"{fmt_num}")
+        self.log(f"{divider}")
+        self.log(f"{fmt_den}\n")
 
     def update_controller_info(self, Bc, Ac, r_added, zeta, wn):
         info = (
@@ -150,25 +167,61 @@ class AutoControlApp:
 
             self.log(f"✅ 对象: {PolynomialUtils.to_str(num)} / {PolynomialUtils.to_str(den)}")
 
-            # 设计控制器
-            Bc, Ac, r_added, zeta, wn = design_controller(num, den, mp, ts, in_type)
+            # 1. 设计控制器
+            Bc, Ac, r_added, zeta, wn, desired_poly = design_controller(num, den, mp, ts, in_type)
             self.update_controller_info(Bc, Ac, r_added, zeta, wn)
-            self.log(f"✅ 设计完成：ζ={zeta:.3f}, ωn={wn:.2f}", "success")
+            self.log(f"> 设计目标：ζ={zeta:.3f}, ωn={wn:.2f}", "success")
 
-            # 稳定性校验
-            T_num = PolynomialUtils.multiply(Bc, num)
-            T_den = PolynomialUtils.add(PolynomialUtils.multiply(Ac, den), T_num)
-            is_stable = RouthStability.check(T_den)
+            # 2. 丢番图方程验证 (LHS vs RHS)
+            self.log("-" * 55)
+            self.log("🔍 验证环节：丢番图方程求解 (LHS vs RHS)")
+            
+            # 计算实际闭环多项式
+            LHS_part1 = PolynomialUtils.multiply(den, Ac)
+            LHS_part2 = PolynomialUtils.multiply(num, Bc)
+            actual_poly = PolynomialUtils.add(LHS_part1, LHS_part2)
+            
+            # 对齐长度以便打印
+            len_max = max(len(actual_poly), len(desired_poly))
+            act_pad = [0.0]*(len_max - len(actual_poly)) + actual_poly
+            des_pad = [0.0]*(len_max - len(desired_poly)) + desired_poly
+            
+            header = f"{'阶次':<6} {'实际系数(LHS)':<15} {'期望系数(RHS)':<15} {'误差':<12}"
+            self.log(header)
+            self.log("-" * 55)
+            
+            # 倒序打印
+            for i in range(len_max - 1, -1, -1):
+                idx = len_max - 1 - i
+                val_act = act_pad[idx]
+                val_des = des_pad[idx]
+                err = abs(val_act - val_des)
+                if abs(val_act) > 1e-9 or abs(val_des) > 1e-9:
+                    row_str = f"s^{i:<5} {val_act:<15.5f} {val_des:<15.5f} {err:<12.1e}"
+                    self.log(row_str)
+            self.log("-" * 55)
+
+            # 3. 打印传递函数
+            self.log("🧮 系统传递函数形式:")
+            self.log_transfer_function("控制器 C(s)", Bc, Ac)
+            
+            # 闭环传递函数 T(s) = (Num*Bc) / Characteristic_Poly
+            CL_num = PolynomialUtils.multiply(num, Bc)
+            CL_den = actual_poly 
+            self.log_transfer_function("闭环系统 T(s)", CL_num, CL_den)
+            self.log("-" * 55)
+
+            # 4. 稳定性校验
+            is_stable = RouthStability.check(actual_poly)
             status = "稳定" if is_stable else "不稳定"
-            self.log(f"🔒 劳斯判据(理论)：{status}", "success" if is_stable else "warning")
-            if not is_stable: self.log("⚠️ 理论闭环不稳定！", "warning")
+            self.log(f"🔒 劳斯稳定性检查：{status}", "success" if is_stable else "warning")
+            if not is_stable: self.log("⚠️ 警告：闭环理论不稳定！", "warning")
 
-            # 时域仿真
+            # 5. 时域仿真
             sim_ctrl = CustomSimulator(Bc, Ac)
             sim_plant = CustomSimulator(num, den)
 
             calc_dt = ts / 200.0
-            # 修正：增加 dt 下限保护 (1e-5)，防止极小 Ts 导致性能问题
             dt = max(1e-5, min(0.01, calc_dt))
             t_end = ts * 4.0
             t_data = np.arange(0, t_end, dt)
@@ -198,7 +251,6 @@ class AutoControlApp:
                 y_list.append(y_curr)
                 u_list.append(u_act)
                 
-                # 抗积分饱和 Clamping 逻辑
                 ctrl_input = error
                 if in_saturation:
                     if (u_act > 0 and error > 0) or (u_act < 0 and error < 0):
@@ -218,6 +270,7 @@ class AutoControlApp:
                 target_curve = np.ones_like(t_data)
                 target_val = 1.0
 
+            # 绘图
             self.setup_plot_style("系统响应 y(t)", self.ax1)
             self.ax1.plot(t_data, target_curve, 'r--', label='参考输入')
             self.ax1.plot(t_data, y_data, 'b', linewidth=2, label='系统输出')
@@ -229,12 +282,29 @@ class AutoControlApp:
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
             self.ax2.legend(prop={'size': 9})
 
+            # 性能指标与可视化标注
             analyzer = PerformanceAnalyzer(t_data, y_data, target_val)
             metrics = analyzer.get_metrics()
+            
             if in_type == 'step':
-                self.log(f"📊 超调量：{metrics['overshoot']:.2f}% | 调节时间：{metrics['ts']:.2f}s")
+                self.log(f"📊 仿真结果: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tp={metrics['tp']:.2f}s")
+                
+                # --- 绘制辅助线和标注 ---
+                # 1. 峰值时间 Tp (绿色虚线 + 红点)
+                tp = metrics['tp']
+                peak_val = y_data[np.argmax(y_data)]
+                self.ax1.axvline(x=tp, color='green', linestyle='--', alpha=0.6, linewidth=1)
+                self.ax1.plot(tp, peak_val, 'ro', markersize=4)
+                self.ax1.text(tp, peak_val*1.02, f"Tp:{tp:.2f}s", color='green', fontsize=8, ha='center')
+
+                # 2. 调节时间 Ts (品红虚线)
+                ts = metrics['ts']
+                if ts > 0:
+                    self.ax1.axvline(x=ts, color='magenta', linestyle='--', alpha=0.6, linewidth=1)
+                    self.ax1.text(ts, target_val*0.9, f"Ts:{ts:.2f}s", color='magenta', fontsize=8, ha='right')
+
                 info = f"OS: {metrics['overshoot']:.1f}%\nTs: {metrics['ts']:.2f}s"
-                self.ax1.text(t_end*0.6, target_val*0.5, info, bbox=dict(boxstyle="round", fc="white", alpha=0.8))
+                self.ax1.text(t_end*0.75, target_val*0.2, info, bbox=dict(boxstyle="round", fc="white", alpha=0.8))
 
             self.canvas.draw()
 
