@@ -83,8 +83,9 @@ class PolynomialUtils:
 class RouthStability:
     @staticmethod
     def check(coeff_asc: List[float]) -> bool:
-        """劳斯判据稳定性检查 (完整版)"""
+        """劳斯判据稳定性检查 (修正版：修复符号陷阱)"""
         coeff = coeff_asc[::-1]
+        # 移除高阶零系数
         while len(coeff) > 0 and abs(coeff[0]) < 1e-9: coeff.pop(0)
         if not coeff: return True
             
@@ -97,12 +98,14 @@ class RouthStability:
         EPS = 1e-9
 
         for i in range(2, n):
-            if np.all(np.abs(R[i-1, :]) < EPS): # 全零行处理
+            # 全零行处理
+            if np.all(np.abs(R[i-1, :]) < EPS): 
                 for j in range(cols):
                     power = (n - 1 - (i - 2)) - 2 * j 
                     if power < 0: continue
                     R[i-1, j] = R[i-2, j] * power 
 
+            # 首元素为零处理
             if abs(R[i-1, 0]) < EPS: R[i-1, 0] = 1e-6 
 
             for j in range(cols - 1):
@@ -112,7 +115,15 @@ class RouthStability:
 
         first_col = R[:, 0]
         if np.any(np.isnan(first_col)): return False
-        return np.all(first_col > -EPS)
+        
+        # 修正逻辑：不仅检查是否 > 0，而是检查是否符号一致
+        # 过滤掉极小的数值噪声
+        valid_signs = [np.sign(x) for x in first_col if abs(x) > 1e-7]
+        if not valid_signs: return True
+        
+        # 检查是否所有符号都与第一个元素的符号相同
+        base_sign = valid_signs[0]
+        return all(s == base_sign for s in valid_signs)
 
 class PoleUtils:
     @staticmethod

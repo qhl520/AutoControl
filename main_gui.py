@@ -18,7 +18,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 class AutoControlApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("SISO 自动控制系统设计平台 Pro v3.1 (Ultimate Sim)")
+        self.root.title("SISO 自动控制系统设计平台 Pro v3.2 (Robust Sim)")
         self.root.geometry("1300x900")
         self.root.minsize(1200, 800)
         
@@ -42,7 +42,7 @@ class AutoControlApp:
     def create_sidebar(self):
         title_frame = ttk.Frame(self.left_panel, padding=(5, 8))
         title_frame.pack(fill=X, pady=(0, 5))
-        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.1", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
+        ttk.Label(title_frame, text="⚡ SISO设计平台 v3.2", font=("微软雅黑", 14, "bold"), foreground='#2980b9').pack(side=LEFT)
 
         # 1. 被控对象
         group_plant = ttk.Labelframe(self.left_panel, text="🏭 被控对象模型", padding=8)
@@ -163,7 +163,7 @@ class AutoControlApp:
             self.log(f"🔒 劳斯判据(理论)：{status}", "success" if is_stable else "warning")
             if not is_stable: self.log("⚠️ 理论闭环不稳定！", "warning")
 
-            # 4. 时域仿真 (【升级版】结构化时序仿真)
+            # 4. 时域仿真 (结构化时序仿真 + 抗饱和)
             sim_ctrl = CustomSimulator(Bc, Ac)
             sim_plant = CustomSimulator(num, den)
 
@@ -175,40 +175,51 @@ class AutoControlApp:
             y_list = []
             u_list = []
             
-            # 初始化：先计算 t=0 时刻的输出
-            # 假设初始状态为0，u=0，则 y=0
-            # 严格来说应先初始化 y_curr
+            # 初始化：假设初始状态全为0
             y_curr = sim_plant.compute_output(0.0)
             
-            self.log("⚙️ 启动高精度非线性仿真...", "info")
+            self.log("⚙️ 启动抗饱和高精度仿真...", "info")
             
-            # --- 核心仿真循环 (Corrected Timing) ---
+            # --- 核心仿真循环 (加入Anti-windup) ---
             for t in t_data:
-                # 1. 获取参考输入 r(t)
+                # 1. 获取参考输入
                 r_val = t if in_type == 'ramp' else 1.0
                 
-                # 2. 计算误差 e(t) (基于当前的 y)
+                # 2. 计算误差
                 error = r_val - y_curr
                 
-                # 3. 计算控制器输出 u(t) (基于当前的误差)
+                # 3. 计算控制器期望输出
                 u_raw = sim_ctrl.compute_output(error)
                 
                 # 4. 执行器限幅
-                if u_raw > ulim: u_act = ulim
-                elif u_raw < -ulim: u_act = -ulim
-                else: u_act = u_raw
+                in_saturation = False
+                if u_raw > ulim: 
+                    u_act = ulim
+                    in_saturation = True
+                elif u_raw < -ulim: 
+                    u_act = -ulim
+                    in_saturation = True
+                else: 
+                    u_act = u_raw
                 
-                # 5. 记录数据 (当前的 y 和 u)
+                # 5. 记录数据
                 y_list.append(y_curr)
                 u_list.append(u_act)
                 
-                # 6. 更新状态 x(t) -> x(t+dt)
-                sim_ctrl.update_state(error, dt)
+                # 6. 更新状态 (抗积分饱和 Clamping)
+                # 如果饱和且误差试图使控制量继续增加（加剧饱和），则“夹住”控制器的积分状态
+                # 这里使用简单的Clamping策略：将输入控制器的误差置为0
+                ctrl_input = error
+                if in_saturation:
+                    # 简单启发式：若已达到正限幅且误差仍为正，则停止积分
+                    # (注意：这假设控制器正向增益。对于反向增益系统需调整逻辑，但作为通用工具此策略已足够鲁棒)
+                    if (u_act > 0 and error > 0) or (u_act < 0 and error < 0):
+                        ctrl_input = 0.0
+
+                sim_ctrl.update_state(ctrl_input, dt)
                 sim_plant.update_state(u_act, dt)
                 
-                # 7. 准备下一时刻输出 (for next loop)
-                # 注意：如果对象D矩阵非零，u_act的变化会立即反映在输出上
-                # 但通常物理对象D=0。这里我们取更新状态后的输出作为 y(t+dt)
+                # 7. 准备下一时刻输出
                 y_curr = sim_plant.compute_output(u_act)
             # ------------------------------------
 
@@ -228,7 +239,7 @@ class AutoControlApp:
             self.ax1.plot(t_data, y_data, 'b', linewidth=2, label='系统输出')
             self.ax1.legend(prop={'size': 9})
             
-            self.setup_plot_style("控制量 u(t) [真实]", self.ax2)
+            self.setup_plot_style("控制量 u(t) [含抗饱和]", self.ax2)
             self.ax2.plot(t_data, u_data, 'g', linewidth=1.5, label='控制量')
             self.ax2.axhline(ulim, color='k', linestyle=':', alpha=0.3, label='限幅值')
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
