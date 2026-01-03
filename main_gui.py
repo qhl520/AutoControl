@@ -310,11 +310,11 @@ class AutoControlApp:
             # 7. 绘图
             self.setup_plot_style("系统响应 y(t)", self.ax1)
             self.ax1.plot(t_data, target_curve, 'r--', label='参考输入')
-            self.ax1.plot(t_data, y_data, 'b', linewidth=2, label='系统输出')
+            self.ax1.plot(t_data, y_data, 'b', linewidth=1, label='系统输出')
             self.ax1.legend(prop={'size': 9})
             
             self.setup_plot_style("控制量 u(t) [Clamping抗饱和]", self.ax2)
-            self.ax2.plot(t_data, u_data, 'g', linewidth=1.5, label='控制量')
+            self.ax2.plot(t_data, u_data, 'g', linewidth=1, label='控制量')
             self.ax2.axhline(ulim, color='k', linestyle=':', alpha=0.3, label='限幅值')
             self.ax2.axhline(-ulim, color='k', linestyle=':', alpha=0.3)
             self.ax2.legend(prop={'size': 9})
