@@ -327,7 +327,7 @@ class AutoControlApp:
                 tr = metrics['tr'] # [架构修复] 直接从 analyzer 获取
                 ess = metrics['error']
                 
-                self.log(f"📊 [阶跃]指标: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tr={tr:.2f}s | ess={ess:.5f}")
+                self.log(f"📊 [阶跃]指标: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tr={tr:.2f}s | ess={ess:.1e}")
                 
                 # 绘图标注
                 tp = metrics['tp']
@@ -347,18 +347,18 @@ class AutoControlApp:
                         f"Tp : {metrics['tp']:5.2f} s\n"
                         f"Tr : {tr:5.2f} s\n"
                         f"Ts : {metrics['ts']:5.2f} s\n"
-                        f"Ess: {ess:.5f}") 
+                        f"Ess: {ess:.1e}") 
 
             elif in_type == 'ramp':
                 final_error = metrics['error']
                 
-                self.log(f"📊 [斜坡]指标: 稳态跟踪误差 ess ≈ {final_error:.5f}")
+                self.log(f"📊 [斜坡]指标: 稳态跟踪误差 ess ≈ {final_error:.1e}")
                 self.log("ℹ️ 提示: 斜坡响应不适用超调量/调节时间指标")
 
                 info = (f"Ramp Response:\n"
                         f"--------------\n"
                         f"Tracking Err:\n"
-                        f"ess ≈ {final_error:.4f}")
+                        f"ess ≈ {final_error:.1e}")
 
             self.ax1.text(0.96, 0.04, info, transform=self.ax1.transAxes,
                           verticalalignment='bottom', horizontalalignment='right',
