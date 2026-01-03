@@ -324,7 +324,7 @@ class AutoControlApp:
             metrics = analyzer.get_metrics()
             
             if in_type == 'step':
-                tr = metrics['tr'] # [架构修复] 直接从 analyzer 获取
+                tr = metrics['tr'] 
                 ess = metrics['error']
                 
                 self.log(f"📊 [阶跃]指标: MP={metrics['overshoot']:.2f}% | Ts={metrics['ts']:.2f}s | Tr={tr:.2f}s | ess={ess:.1e}")
